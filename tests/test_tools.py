@@ -179,6 +179,18 @@ def test_gonogo_verdict_from_predictions():
     assert len(report.to_dict()["cases"]) == 200
 
 
+def test_eval_rejects_newer_contract(tmp_path, monkeypatch):
+    art = tmp_path / "art"
+    art.mkdir()
+    for f, body in {"config.json": "{}", "label2id.json": '{"a": 0}',
+                    "temperature.json": '{"temperature": 1.0}',
+                    "metrics.json": json.dumps({"contract_version": tools.CONTRACT_VERSION + 1})}.items():
+        (art / f).write_text(body, encoding="utf-8")
+    p = write_jsonl(tmp_path / "c.jsonl", rows())
+    out = json.loads(tools.thomas_encoder_eval({"model_dir": str(art), "cases_path": str(p)}))
+    assert "contract_version" in out["error"]
+
+
 def test_eval_rejects_non_artifact_dir(tmp_path):
     p = write_jsonl(tmp_path / "c.jsonl", rows())
     out = json.loads(tools.thomas_encoder_eval({"model_dir": str(tmp_path), "cases_path": str(p)}))

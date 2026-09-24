@@ -40,7 +40,10 @@ DEFAULT_MODEL = "johnnyboycurtis/ModernBERT-small-v2"
 DEFAULTS = {"epochs": 3, "batch_size": 32, "lr": 2e-5, "calib_size": 500, "seed": 7}
 _HERE = Path(__file__).resolve().parent
 _RUN_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-MIN_PER_LABEL = 5  # below this a label can neither be learned nor show up in the calib split
+MIN_PER_LABEL = 5
+# thomas docs/CONTRACT.md. Readers accept artifacts at or below this version;
+# an artifact without the field is version 1.
+CONTRACT_VERSION = 1  # below this a label can neither be learned nor show up in the calib split
 
 # --------------------------------------------------------------------------- #
 # helpers
@@ -395,9 +398,14 @@ def _gonogo_report(pred_rows: list[dict], *, task: str, target: float):
 def thomas_encoder_eval(args: dict, **_: Any) -> str:
     try:
         model_dir = Path(str(args.get("model_dir") or "")).expanduser()
-        for need in ("label2id.json", "temperature.json", "config.json"):
+        for need in ("config.json", "label2id.json", "temperature.json", "metrics.json"):
             if not (model_dir / need).is_file():
                 return _fail(f"{model_dir} is not a thomas artifact dir (missing {need})")
+        metrics = _read_json(model_dir / "metrics.json") or {}
+        version = _as_int(metrics.get("contract_version"), 1)
+        if version > CONTRACT_VERSION:
+            return _fail(f"artifact has thomas contract_version {version}; this plugin reads "
+                         f"<= {CONTRACT_VERSION} — update hermes-plugin-thomas")
         rows, problems = load_rows(args.get("cases_path"))
         if problems:
             return _fail(f"{len(problems)} case row(s) fail the schema", problems=problems[:20])
@@ -445,6 +453,7 @@ def thomas_encoder_eval(args: dict, **_: Any) -> str:
             "needed_n": decision.needed_n,
             "notes": list(decision.notes),
             "labels_unseen_in_training": unknown,
+            "contract_version": version,
             "markdown": report.markdown(show_failures=5),
         }
         save = args.get("save_report")

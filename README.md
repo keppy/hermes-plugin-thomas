@@ -41,6 +41,15 @@ The allowlist key is a hash of that resolved config. So answering `[a]lways`
 approves that one config, and a different model, dataset or epoch count asks
 again. A non-interactive session with no approval bridge fails closed.
 
+## Contract
+
+The plugin reads thomas artifacts against thomas's
+[docs/CONTRACT.md](https://github.com/keppy/thomas/blob/main/docs/CONTRACT.md):
+the confidence definition, the artifact layout, the split rules. It supports
+**contract version 1** (thomas 0.2.x). An artifact with a newer
+`contract_version` in its `metrics.json` is refused with a message to update
+the plugin, rather than read wrong.
+
 ## Setup
 
 The plugin itself only needs `gonogo-eval`, which Hermes installs from
@@ -48,7 +57,7 @@ The plugin itself only needs `gonogo-eval`, which Hermes installs from
 Modal stay out of the Hermes venv:
 
 ```bash
-git clone https://github.com/keppy/thomas && cd thomas
+git clone --branch v0.2.0 https://github.com/keppy/thomas && cd thomas
 uv venv && uv pip install -e ".[encoder]"
 .venv/Scripts/modal token new        # or .venv/bin/modal on macOS/Linux
 ```
