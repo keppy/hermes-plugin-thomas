@@ -88,6 +88,19 @@ is optimistically biased. Re-measure it on fresh cases before relying on it.
 ```
 
 That's the same verdict as the gonogo example script run on the same artifact.
+
+And a live run through the plugin itself, start to finish: `thomas_check_data` →
+`thomas_encoder_train` (approval gate) → Modal L4 → `thomas_run_status` →
+`thomas_encoder_eval`. The config was deliberately tiny (801 training rows,
+about 10 per label, 1 epoch), so the model is weak and the verdict says so:
+
+```
+DO NOT AUTOMATE — pass rate 15.2% [11.3%, 20.2%] is below 50%
+(trained in 85 s; T = 0.60; calibration error 0.07; chance is 1.3% on 77 labels)
+```
+
+The first artifact pull hit Modal's stale-volume snapshot and the built-in retry
+recovered, which is why the retry is there.
 Confidence comes from `thomas.encoder_train.scaled_softmax`, the function the
 training run used to fit the temperature, so there's one definition end to end.
 
