@@ -1,0 +1,28 @@
+# Hermes reads [project].dependencies from this file and installs them into its
+# own venv. Deliberately light: only gonogo, which the eval tool calls
+# in-process. The training stack (thomas + modal + torch + transformers) lives
+# in its own environment, pointed at by THOMAS_PYTHON, so a GPU toolchain never
+# lands in the Hermes venv.
+
+[project]
+name = "hermes-plugin-thomas"
+version = "0.1.0"
+description = "Hermes plugin: fine-tune a calibrated encoder on Modal and rate it with gonogo."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "James Dominguez" }]
+keywords = ["hermes", "plugin", "fine-tuning", "encoder", "calibration", "gonogo"]
+dependencies = [
+  "gonogo-eval>=0.2,<0.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pyyaml>=6"]
+
+[project.urls]
+Homepage = "https://github.com/keppy/hermes-plugin-thomas"
+Source = "https://github.com/keppy/hermes-plugin-thomas"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
