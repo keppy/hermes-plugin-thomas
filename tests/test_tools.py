@@ -150,6 +150,23 @@ def test_train_rejects_path_like_run_name(tmp_path, fake_thomas):
     assert "run_name" in out["error"]
 
 
+def test_status_rejects_path_like_run_name(runs_dir):
+    out = json.loads(tools.thomas_run_status({"run_name": "../escape"}))
+    assert "run_name" in out["error"]
+    assert not (runs_dir.parent / "escape").exists()
+
+
+def test_status_listing_skips_internal_dirs(runs_dir):
+    ev = runs_dir / "_evals"
+    ev.mkdir(parents=True)
+    (ev / "1.cases.jsonl").write_text("", encoding="utf-8")
+    real = runs_dir / "t1"
+    real.mkdir()
+    (real / "status.json").write_text('{"state": "done"}', encoding="utf-8")
+    out = json.loads(tools.thomas_run_status({}))
+    assert [r["run_name"] for r in out["runs"]] == ["t1"]
+
+
 def test_train_without_thomas_python(tmp_path, monkeypatch):
     monkeypatch.delenv("THOMAS_PYTHON", raising=False)
     p = write_jsonl(tmp_path / "d.jsonl", rows())

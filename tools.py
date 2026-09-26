@@ -361,12 +361,15 @@ def thomas_run_status(args: dict, **_: Any) -> str:
         root = runs_root()
         name = args.get("run_name")
         if not isinstance(name, str) or not name.strip():
-            runs = sorted((p for p in root.iterdir() if p.is_dir()),
+            runs = sorted((p for p in root.iterdir() if p.is_dir() and not p.name.startswith("_")),
                           key=lambda p: p.stat().st_mtime, reverse=True)[:20]
             return json.dumps({"runs_dir": str(root),
                                "runs": [{k: v for k, v in run_state(p).items() if k != "config"}
                                         for p in runs]}, ensure_ascii=False)
-        run_dir = root / name.strip()
+        name = name.strip()
+        if not _RUN_NAME.match(name):
+            return _fail(f"run_name {name!r} must be letters, digits, '.', '_' or '-' (max 64)")
+        run_dir = root / name
         if not run_dir.is_dir():
             return _fail(f"no run named {name!r} under {root}")
         out = run_state(run_dir)
