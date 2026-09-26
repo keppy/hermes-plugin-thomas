@@ -6,7 +6,7 @@
 
 [project]
 name = "hermes-plugin-thomas"
-version = "0.1.0"
+version = "0.1.1"
 description = "Hermes plugin: fine-tune a calibrated encoder on Modal and rate it with gonogo."
 readme = "README.md"
 requires-python = ">=3.11"
