@@ -5,7 +5,7 @@
 # `git rev-parse v<version>^{commit}` in the commit after tagging, never by hand.
 name: thomas
 repo: https://github.com/keppy/hermes-plugin-thomas
-sha: a440b0cc3302bf654feb70123b9d247572b60311
+sha: b087cf158905e62b16c02e7bb1aa38691186ea6b
 description: Fine-tune a small calibrated encoder classifier on Modal and rate it with gonogo.
   GPU launches through the thomas_encoder_train tool require human approval of a frozen data
   snapshot and config; direct Python/terminal/Modal launches are outside this hook. Data
