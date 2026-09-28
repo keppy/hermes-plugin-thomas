@@ -21,10 +21,13 @@ or produces a number nobody should trust.
    are held out for temperature scaling, but they are *not* an eval set: T was
    fit on them. If the user has one file, split it before training (for example
    80/20 by a fixed seed) and train on the 80 only.
-3. **`thomas_encoder_train` asks the human.** The call stops at the approval
-   gate with the config shown. Do not try to talk the user past it, and do not
-   retry a denied launch with a tweaked config to get a fresh prompt — ask what
-   they want changed.
+3. **Choose a unique `run_name` and call `thomas_encoder_train` through Hermes.**
+   The plugin freezes and validates the JSONL before the approval prompt, shows
+   its SHA-256 and resolved config, and trains only from those approved bytes.
+   The Hermes hook does not gate terminal/Python/Modal commands. Do not try to
+   talk the user past a denial or retry with a tweaked config; ask what changed.
+   A denied approval may leave a pending snapshot: a new attempt needs a fresh
+   run name (or explicit cleanup of a stale `_approvals` entry).
 4. **Poll `thomas_run_status`; never launch a second run to "check".** A run
    takes minutes. `failed` comes with a log tail — read it before proposing a
    rerun, because a rerun costs the same money as the first.

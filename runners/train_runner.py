@@ -1,14 +1,15 @@
 """Runs in THOMAS_PYTHON, detached: train on Modal, pull the artifact, record status.
 
-    python train_runner.py <run_dir>
+    python train_runner.py <run_dir> <approved_config_digest>
 
-Reads <run_dir>/config.json (written by the plugin), writes <run_dir>/status.json
-at every state change. Uses thomas' public Modal entry points, so this is the
-same code path as `modal run -m thomas.encoder_train`.
+The digest is passed by the gate-checked parent process, not read from mutable
+run files. Reads <run_dir>/config.json, writes status.json on state changes.
+Uses thomas' public Modal entry points.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -23,16 +24,27 @@ def write_status(run_dir: Path, **fields) -> None:
     os.replace(tmp, run_dir / "status.json")
 
 
-def main(run_dir: Path) -> int:
-    cfg = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
+def main(run_dir: Path, approved_config_digest: str) -> int:
     started = time.strftime("%Y-%m-%dT%H:%M:%S")
     write_status(run_dir, state="running", started=started)
     try:
+        cfg = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
+        if not isinstance(approved_config_digest, str) or len(approved_config_digest) != 64:
+            raise ValueError("missing approved config digest; refusing paid launch")
+        # The parent adds pid after spawning; it is not a training parameter.
+        approved_fields = {k: v for k, v in cfg.items() if k != "pid"}
+        actual_digest = hashlib.sha256(
+            json.dumps(approved_fields, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        if actual_digest != approved_config_digest:
+            raise ValueError("approved training config changed; refusing paid launch")
+        snapshot = Path(cfg["data_path"]).read_bytes()
+        if hashlib.sha256(snapshot).hexdigest() != cfg["data_sha256"]:
+            raise ValueError("approved data snapshot hash mismatch; refusing paid launch")
         from thomas.encoder_train import (EncoderTrainConfig, pull_encoder_artifact,
                                           run_encoder_train_modal)
-
         rows = []
-        for line in Path(cfg["data_path"]).read_text(encoding="utf-8").splitlines():
+        for line in snapshot.decode("utf-8").splitlines():
             line = line.strip()
             if line and not line.startswith("//"):
                 d = json.loads(line)
@@ -78,4 +90,6 @@ def main(run_dir: Path) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(Path(sys.argv[1])))
+    if len(sys.argv) != 3:
+        raise SystemExit("usage: train_runner.py <run_dir> <approved_config_digest>")
+    sys.exit(main(Path(sys.argv[1]), sys.argv[2]))

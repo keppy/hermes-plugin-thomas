@@ -68,10 +68,10 @@ THOMAS_ENCODER_TRAIN = {
             "seed": {"type": "integer", "description": "Holdout + shuffle seed. Default 7."},
             "run_name": {
                 "type": "string",
-                "description": "Name for the run and its artifact dir. Default enc-<timestamp>.",
+                "description": "Unique run name, required for a one-time approval. No automatic relaunch name.",
             },
         },
-        "required": ["data_path"],
+        "required": ["data_path", "run_name"],
     },
 }
 

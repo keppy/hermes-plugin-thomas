@@ -1,9 +1,9 @@
 # thomas — a Hermes plugin
 
 Train a small calibrated classifier on a Modal GPU and get a gonogo verdict on
-it, without leaving the conversation. Every GPU launch stops at Hermes' human
-approval gate with the exact config on screen. Checking the data and running
-the eval are local and free.
+it, without leaving the conversation. Launches through `thomas_encoder_train`
+use Hermes' human approval gate; direct Python, terminal and Modal commands
+are **outside this hook's scope**. Checking data and CPU eval are local and free.
 
 ## The ecosystem this belongs to
 
@@ -11,29 +11,29 @@ This plugin is the in-session half of a small ecosystem that takes a task
 from *which model?* to *ship it or not*:
 
 ```
-your task ──► evalroute ─ the right (model, effort) arm for the task,
-                │         by measured cost per verified success
+your task ──► evalroute ─ choose a (model, effort) arm;
+                │         measured where available, priors marked
                 ▼
-your cases ──► thomas ── a calibrated model trained against your bar;
-                │         gonogo scores the baseline and the after
+your cases ──► thomas ── train on labels (encoder) or score_text (RL);
+                │         evaluate on untouched cases with gonogo
                 ▼
-              gonogo ── ship it, ship it behind a threshold, or walk away
+              gonogo ── ship it, test a threshold on fresh cases, or walk away
 ```
 
 - **[thomas](https://github.com/keppy/thomas)** — the library behind this
-  plugin. One case set, one `score_text`, a baseline card, a training run
-  (encoder SFT on Modal, or RL), the same bar at both ends.
+  plugin. RL shares `score_text` across training and held-out evaluation;
+  encoder SFT instead learns labels and needs a separate held-out evaluation.
 - **[gonogo](https://github.com/keppy/gonogo)** — the decision layer, and the
   root of the map. Any agent, your real cases, a target; the verdict comes
   with the interval behind it.
 - **[evalroute](https://github.com/keppy/hermes-plugin-evalroute)** — the
   routing layer: classify the task, hand back the arm with measured
-  cost-per-verified-success behind it, rate the outcome so the table keeps
-  learning.
+  costs where available and priors otherwise; collect ratings to prioritize
+  the next controlled batch.
 - **The Hermes plugins** — the same three, inside your agent's session:
-  [gonogo](https://github.com/keppy/hermes-plugin-gonogo) where the number
-  happened, this one with GPU launches behind the approval gate, and
-  evalroute's `/route` before the first turn.
+  [gonogo](https://github.com/keppy/hermes-plugin-gonogo) for decisions,
+  this one's training tool with a human approval hook, and evalroute's
+  `/route` before the first turn.
 
 ```bash
 hermes plugins install keppy/hermes-plugin-thomas
@@ -59,17 +59,28 @@ the model never saw, poll rather than relaunch, report the interval.
 
 ## The credit gate
 
-`thomas_encoder_train` is escalated to Hermes' approval gate on every call, by
-a hook that runs before the handler. The model can't skip it. The prompt looks like:
+`thomas_encoder_train` calls through Hermes' `pre_tool_call` approval hook.
+Choose a unique `run_name` for each attempt. Before asking, the hook validates
+the hyperparameters and data, freezes the input bytes, and shows the input
+SHA-256 alongside the resolved config and run name. The runner reads only
+that snapshot (and checks its hash again before any Modal call), even if the
+original file changes during approval. Invalid requests are blocked without
+a launch. The rule key includes a fresh approval nonce as well as config and
+data hash, so `[a]lways` does **not** silently approve repeated launches.
+The approval intent is held outside the editable snapshot manifest in the
+Hermes process. Editing both files cannot change the approved digest; a Hermes
+restart invalidates pending intents, so use a fresh run name. The detached runner
+also receives an approved config digest on its command line: editing both its
+config and data files cannot authorize different bytes before a Modal call.
+A run name is never reused; polling a run does not relaunch it.
 
-```
-thomas: launch a PAID GPU fine-tune — johnnyboycurtis/ModernBERT-small-v2 on
-cases.jsonl (9503 rows), 3 epochs, batch 32, lr 2e-05, calib 500, seed 7, L4 (Modal)
-```
-
-The allowlist key is a hash of that resolved config. So answering `[a]lways`
-approves that one config, and a different model, dataset or epoch count asks
-again. A non-interactive session with no approval bridge fails closed.
+This protection applies to plugin tool calls through Hermes, **not** a
+`terminal` invocation, direct library import or Modal CLI. There is no claim
+that the hook can intercept those routes. In a non-interactive session with
+no approval bridge, the Hermes tool call fails closed. A denied prompt may
+leave a pending snapshot under `_approvals/`; use a fresh run name for a new
+approval or explicitly remove the stale entry. Run data (including the
+snapshot) stays local under the runs directory.
 
 ## Contract
 
@@ -86,17 +97,29 @@ The plugin itself only needs `gonogo-eval`, which Hermes installs from
 `pyproject.toml`. Training and inference run in a separate Python so torch and
 Modal stay out of the Hermes venv:
 
+This plugin revision needs `thomas-train` v0.2.1 (the contract it reads
+shipped there) and `gonogo-eval` 0.3; thomas v0.2.0 is not compatible:
+
 ```bash
-git clone --branch v0.2.0 https://github.com/keppy/thomas && cd thomas
+git clone --branch v0.2.1 https://github.com/keppy/thomas && cd thomas
 uv venv && uv pip install -e ".[encoder]"
 .venv/Scripts/modal token new        # or .venv/bin/modal on macOS/Linux
 ```
 
-Then set `THOMAS_PYTHON` to that interpreter in `$HERMES_HOME/.env`:
+Set the **nonsecret runtime setting** `THOMAS_PYTHON` in the environment
+of the process that starts Hermes, then restart Hermes to inherit it. For
+example, from Git Bash on Windows:
 
+```bash
+export THOMAS_PYTHON="C:/path/to/thomas/.venv/Scripts/python.exe"
+hermes
 ```
-THOMAS_PYTHON=C:/Users/you/git/thomas/.venv/Scripts/python.exe
-```
+
+On macOS/Linux, use the venv's `bin/python` instead. The plugin itself
+registers without this setting; only train and CPU eval need it. Do **not**
+put it in Hermes' `.env`: `requires_env` is the install-time credential
+prompt, and the interpreter path is neither a secret nor a plugin admission
+requirement. The catalog correctly keeps `requires_env: []`.
 
 Runs live under `$HERMES_HOME/thomas/runs/<run_name>/` (`config.json`,
 `status.json`, `log.txt`, `artifact/`). Set `THOMAS_RUNS_DIR` to put them
@@ -104,9 +127,14 @@ somewhere else.
 
 ## Checked against a real artifact
 
-`thomas_encoder_eval` on the Banking77 canary artifact from the
-[thomas](https://github.com/keppy/thomas) repo (ModernBERT-small-v2, 250 held-out
-cases, target 95%):
+`thomas_encoder_eval` was run on the original **local-only** Banking77
+ModernBERT-small-v2 artifact and 250 held-out cases (target 95%). The model
+and case text are **not tracked** in either repository or available at an
+advertised download URL. The thomas repo ships a text-free
+[per-case prediction receipt](https://github.com/keppy/thomas/blob/main/examples/receipts/banking77_predictions.jsonl)
+and CPU replay script; these reproduce the gonogo decision without the
+checkpoint, but do not reproduce inference from an independently downloaded
+model:
 
 ```
 AUTOMATE WITH REVIEW — overall pass rate 87.2% [82.5%, 90.8%] misses the 95% target,
@@ -119,7 +147,7 @@ is optimistically biased. Re-measure it on fresh cases before relying on it.
 
 That's the same verdict as the gonogo example script run on the same artifact.
 
-And a live run through the plugin itself, start to finish: `thomas_check_data` →
+A previous live run through the plugin, start to finish (not repeated in this review): `thomas_check_data` →
 `thomas_encoder_train` (approval gate) → Modal L4 → `thomas_run_status` →
 `thomas_encoder_eval`. The config was deliberately tiny (801 training rows,
 about 10 per label, 1 epoch), so the model is weak and the verdict says so:

@@ -1,11 +1,12 @@
 name: thomas
-version: 0.1.1
+version: "0.1.2"
 manifest_version: 2
 api_version: 1
 description: >-
-  Fine-tune a small calibrated encoder classifier on Modal and rate it with
-  gonogo, from inside a Hermes session. Every GPU launch stops at the human
-  approval gate first; data checks and evaluation run locally for free.
+  Fine-tune a calibrated encoder on Modal and rate it with gonogo. GPU
+  launches through the registered training tool require human approval;
+  direct terminal, Python, and Modal launches are outside that hook.
+  Data checks and CPU evaluation run locally.
 author: James Dominguez (keppy)
 license: MIT
 homepage: https://github.com/keppy/hermes-plugin-thomas

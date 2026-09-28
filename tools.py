@@ -26,7 +26,9 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
+import uuid
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -44,6 +46,17 @@ MIN_PER_LABEL = 5
 # thomas docs/CONTRACT.md. Readers accept artifacts at or below this version;
 # an artifact without the field is version 1.
 CONTRACT_VERSION = 1  # below this a label can neither be learned nor show up in the calib split
+
+# Process-local approval intent, separate from mutable run files. It is NOT a
+# substitute for Hermes' human decision: the framework dispatches this handler
+# only after approval. A denied prompt or process restart cannot be replayed
+# by editing approval.json; the operator must start a fresh named run.
+_APPROVAL_INTENTS: dict[str, str] = {}
+_APPROVAL_LOCK = threading.Lock()
+
+
+def _approval_digest(manifest: dict) -> str:
+    return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
 
 # --------------------------------------------------------------------------- #
 # helpers
@@ -76,6 +89,16 @@ def _as_float(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+def _positive_int(value: Any, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+def _finite_positive(value: Any, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a finite positive number")
+    return float(value)
 
 
 def _hermes_home() -> Path:
@@ -191,20 +214,59 @@ def check_rows(rows: list[dict], problems: list[str], calib_size: int) -> dict:
 
 
 def train_config(args: dict) -> dict:
-    """The resolved config a train call would launch — also what the gate shows."""
-    cfg = {
-        "data_path": str(Path(str(args.get("data_path", ""))).expanduser()),
-        "model": str(args.get("model") or DEFAULT_MODEL),
-        "epochs": _as_int(args.get("epochs"), DEFAULTS["epochs"]),
-        "batch_size": _as_int(args.get("batch_size"), DEFAULTS["batch_size"]),
-        "lr": _as_float(args.get("lr"), DEFAULTS["lr"]),
-        "calib_size": _as_int(args.get("calib_size"), DEFAULTS["calib_size"]),
-        "seed": _as_int(args.get("seed"), DEFAULTS["seed"]),
-        "gpu": "L4 (Modal)",
-    }
+    """Resolve and reject invalid paid-run settings before approval."""
+    if not isinstance(args.get("data_path"), str) or not args["data_path"].strip():
+        raise ValueError("data_path is required")
     name = args.get("run_name")
-    cfg["run_name"] = str(name).strip() if isinstance(name, str) and name.strip() else ""
-    return cfg
+    if not isinstance(name, str) or not _RUN_NAME.fullmatch(name) or name.startswith("_"):
+        raise ValueError("run_name is required and must start with a letter or digit "
+                         "(up to 64 letters, digits, '.', '_' or '-')")
+    model = args.get("model", DEFAULT_MODEL)
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError("model must be a non-empty string")
+    seed = args.get("seed", DEFAULTS["seed"])
+    if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+        raise ValueError("seed must be a non-negative integer")
+    return {
+        "data_path": str(Path(args["data_path"]).expanduser().resolve()),
+        "model": model,
+        "epochs": _positive_int(args.get("epochs", DEFAULTS["epochs"]), "epochs"),
+        "batch_size": _positive_int(args.get("batch_size", DEFAULTS["batch_size"]), "batch_size"),
+        "lr": _finite_positive(args.get("lr", DEFAULTS["lr"]), "lr"),
+        "calib_size": _positive_int(args.get("calib_size", DEFAULTS["calib_size"]), "calib_size"),
+        "seed": seed, "gpu": "L4 (Modal)", "run_name": name,
+    }
+
+def _approval_dir(name: str) -> Path:
+    return runs_root() / "_approvals" / name
+
+def _snapshot(cfg: dict) -> tuple[dict, dict]:
+    """Freeze validated input before approval; never replace a pending snapshot."""
+    if (runs_root() / cfg["run_name"]).exists():
+        raise ValueError(f"run {cfg['run_name']!r} already exists; choose a new run_name")
+    pending = _approval_dir(cfg["run_name"])
+    if pending.exists():
+        raise ValueError(f"pending approval for {cfg['run_name']!r} already exists; "
+                         "choose a new run_name or remove the stale _approvals entry")
+    raw = Path(cfg["data_path"]).read_bytes()
+    pending.mkdir(parents=True)
+    try:
+        snap = pending / "data.jsonl"
+        snap.write_bytes(raw)
+        digest = hashlib.sha256(raw).hexdigest()
+        rows, problems = load_rows(str(snap))
+        check = check_rows(rows, problems, cfg["calib_size"])
+        if not check["ok"]:
+            raise ValueError("data check failed: " + "; ".join(check["blockers"]))
+        manifest = {"config": cfg, "data_sha256": digest, "n_rows": len(rows),
+                    "approval_nonce": uuid.uuid4().hex}
+        (pending / "approval.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return manifest, check
+    except BaseException:
+        for p in pending.iterdir():
+            p.unlink()
+        pending.rmdir()
+        raise
 
 
 def _pid_alive(pid: int) -> bool:
@@ -235,6 +297,12 @@ def _read_json(path: Path) -> dict | None:
         return None
 
 
+def _write_json_atomic(path: Path, value: dict) -> None:
+    staged = path.with_name(path.name + ".tmp")
+    staged.write_text(json.dumps(value, indent=2), encoding="utf-8")
+    os.replace(staged, path)
+
+
 def _tail(path: Path, n: int) -> list[str]:
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -254,6 +322,7 @@ def _spawn(argv: list[str], log_path: Path) -> int:
     else:
         kwargs["start_new_session"] = True
     env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
+    env.pop("PYTHONPATH", None)  # avoid Hermes' site-packages shadowing the training venv
     proc = subprocess.Popen(argv, env=env, **kwargs)
     log.close()
     return proc.pid
@@ -283,20 +352,24 @@ def run_state(run_dir: Path) -> dict:
 def credit_gate(tool_name: str = "", args: dict | None = None, **_: Any) -> dict | None:
     """``pre_tool_call`` hook: escalate every training launch to the human gate.
 
-    The rule key hashes the resolved config, so an ``[a]lways`` answer covers
-    exactly this config and never a different model, dataset or epoch count.
+    A fresh nonce, resolved config and frozen dataset hash form the rule key;
+    an ``[a]lways`` answer cannot approve a second launch.
     """
     if tool_name != "thomas_encoder_train":
         return None
-    cfg = train_config(args or {})
     try:
-        n_rows = len(load_rows(cfg["data_path"])[0])
-    except Exception:
-        n_rows = "?"
+        cfg = train_config(args or {})
+        manifest, _ = _snapshot(cfg)
+    except Exception as exc:
+        return {"action": "block", "message": f"thomas: no launch: {exc}"}
     summary = (f"thomas: launch a PAID GPU fine-tune — {cfg['model']} on {cfg['data_path']} "
-               f"({n_rows} rows), {cfg['epochs']} epochs, batch {cfg['batch_size']}, "
-               f"lr {cfg['lr']}, calib {cfg['calib_size']}, seed {cfg['seed']}, {cfg['gpu']}")
-    digest = hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()[:12]
+               f"({manifest['n_rows']} rows), {cfg['epochs']} epochs, batch {cfg['batch_size']}, "
+               f"lr {cfg['lr']}, calib {cfg['calib_size']}, seed {cfg['seed']}, {cfg['gpu']}; "
+               f"run {cfg['run_name']}, input sha256 {manifest['data_sha256']} "
+               "(snapshot frozen before approval)")
+    digest = _approval_digest(manifest)
+    with _APPROVAL_LOCK:
+        _APPROVAL_INTENTS[str(_approval_dir(cfg["run_name"]).resolve())] = digest
     return {"action": "approve", "message": summary, "rule_key": f"thomas_encoder_train:{digest}"}
 
 
@@ -319,32 +392,57 @@ def thomas_check_data(args: dict, **_: Any) -> str:
 def thomas_encoder_train(args: dict, **_: Any) -> str:
     try:
         cfg = train_config(args)
-        rows, problems = load_rows(cfg["data_path"])
-        check = check_rows(rows, problems, cfg["calib_size"])
-        if not check["ok"]:
-            return _fail("data check failed; nothing launched", blockers=check["blockers"],
-                         warnings=check["warnings"])
-        py = _thomas_python()
-
-        name = cfg["run_name"] or f"enc-{int(time.time())}"
-        if not _RUN_NAME.match(name):
-            return _fail(f"run_name {name!r} must be letters, digits, '.', '_' or '-' (max 64)")
+        name = cfg["run_name"]
         run_dir = runs_root() / name
         if run_dir.exists():
             return _fail(f"run {name!r} already exists; pick another run_name",
                          run=run_state(run_dir))
+        pending = _approval_dir(name)
+        intent_key = str(pending.resolve())
+        manifest = _read_json(pending / "approval.json")
+        with _APPROVAL_LOCK:
+            expected_intent = _APPROVAL_INTENTS.get(intent_key)
+        if not manifest or not expected_intent or manifest.get("config") != cfg:
+            return _fail("no matching process-local approval intent; start a fresh run through Hermes")
+        if _approval_digest(manifest) != expected_intent:
+            return _fail("approval manifest changed after the gate; nothing launched")
+        snap = pending / "data.jsonl"
+        approved_bytes = snap.read_bytes()
+        if hashlib.sha256(approved_bytes).hexdigest() != manifest["data_sha256"]:
+            return _fail("approval snapshot changed; nothing launched")
+        rows, problems = load_rows(str(snap))
+        check = check_rows(rows, problems, cfg["calib_size"])
+        if not check["ok"] or check["n_rows"] != manifest["n_rows"]:
+            return _fail("approval snapshot invalid; nothing launched", blockers=check["blockers"])
+        py = _thomas_python()
+        with _APPROVAL_LOCK:
+            if _APPROVAL_INTENTS.pop(intent_key, None) != expected_intent:
+                return _fail("approval intent already consumed; nothing launched")
         run_dir.mkdir(parents=True)
-        cfg["run_name"] = name
+        # Copy the bytes that were hashed, never rename a mutable file after
+        # validation. The runner checks this digest again before any GPU call.
+        (run_dir / "data.jsonl").write_bytes(approved_bytes)
+        (run_dir / "approval.json").write_text(json.dumps(manifest), encoding="utf-8")
+        snap.unlink()
+        (pending / "approval.json").unlink()
+        pending.rmdir()
+        cfg["data_path"] = str(run_dir / "data.jsonl")
+        cfg["data_sha256"] = manifest["data_sha256"]
         cfg["num_labels"] = check["n_labels"]
         cfg["n_rows"] = check["n_rows"]
         cfg["created"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-        (run_dir / "status.json").write_text(json.dumps({"state": "launched"}), encoding="utf-8")
-        (run_dir / "config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-
-        pid = _spawn([py, str(_HERE / "runners" / "train_runner.py"), str(run_dir)],
-                     run_dir / "log.txt")
+        _write_json_atomic(run_dir / "status.json", {"state": "launched"})
+        _write_json_atomic(run_dir / "config.json", cfg)
+        # Bind the detached runner to the approved, process-held config. It
+        # must not trust data_sha256 in a writable config.json by itself:
+        # someone could edit both that field and data.jsonl before startup.
+        approved_config_digest = hashlib.sha256(
+            json.dumps(cfg, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        pid = _spawn([py, str(_HERE / "runners" / "train_runner.py"),
+                      str(run_dir), approved_config_digest], run_dir / "log.txt")
         cfg["pid"] = pid
-        (run_dir / "config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+        _write_json_atomic(run_dir / "config.json", cfg)
         return json.dumps({
             "run_name": name, "state": "launched", "run_dir": str(run_dir),
             "warnings": check["warnings"],
@@ -427,11 +525,13 @@ def thomas_encoder_eval(args: dict, **_: Any) -> str:
         cases_file, preds_file = work / f"{stamp}.cases.jsonl", work / f"{stamp}.preds.jsonl"
         cases_file.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows),
                               encoding="utf-8")
+        inference_env = dict(os.environ, PYTHONIOENCODING="utf-8")
+        inference_env.pop("PYTHONPATH", None)
         proc = subprocess.run(
             [py, str(_HERE / "runners" / "predict_runner.py"), str(model_dir),
              str(cases_file), str(preds_file)],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=1800, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+            timeout=1800, env=inference_env)
         if proc.returncode != 0:
             return _fail("inference failed", stderr_tail=proc.stderr.splitlines()[-15:])
         preds = [json.loads(l) for l in preds_file.read_text(encoding="utf-8").splitlines() if l]

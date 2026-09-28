@@ -1,17 +1,21 @@
-# Submitted to NousResearch/hermes-agent as plugin-catalog/thomas.yaml.
-# Kept here so the reviewed pin sits next to the code it pins; the copy in
-# plugin-catalog/ is the one that installs.
+# Draft of the plugin-catalog/thomas.yaml entry (not yet submitted to
+# NousResearch/hermes-agent). Kept here so the reviewed pin sits next to the
+# code it pins; the copy in plugin-catalog/ is the one that installs.
+# `sha` still points at the last tagged release; re-pin it with
+# `git rev-parse v<version>^{commit}` in the commit after tagging, never by hand.
 name: thomas
 repo: https://github.com/keppy/hermes-plugin-thomas
 sha: a440b0cc3302bf654feb70123b9d247572b60311
 description: Fine-tune a small calibrated encoder classifier on Modal and rate it with gonogo.
-  Every GPU launch goes through the human approval gate with the exact config shown; data
-  checks and evaluation run locally for free.
+  GPU launches through the thomas_encoder_train tool require human approval of a frozen data
+  snapshot and config; direct Python/terminal/Modal launches are outside this hook. Data
+  checks run locally for free. Training and CPU inference need the nonsecret THOMAS_PYTHON
+  interpreter path in the Hermes process environment (not a credential required at install).
 maintainer: keppy
 tier: community
 category: tools
 requires_hermes: ">=0.21"
-version: "0.1.1"
+version: "0.1.2"
 docs_url: https://github.com/keppy/hermes-plugin-thomas#readme
 capabilities:
   provides_tools:
