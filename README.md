@@ -5,6 +5,36 @@ it, without leaving the conversation. Every GPU launch stops at Hermes' human
 approval gate with the exact config on screen. Checking the data and running
 the eval are local and free.
 
+## The ecosystem this belongs to
+
+This plugin is the in-session half of a small ecosystem that takes a task
+from *which model?* to *ship it or not*:
+
+```
+your task ──► evalroute ─ the right (model, effort) arm for the task,
+                │         by measured cost per verified success
+                ▼
+your cases ──► thomas ── a calibrated model trained against your bar;
+                │         gonogo scores the baseline and the after
+                ▼
+              gonogo ── ship it, ship it behind a threshold, or walk away
+```
+
+- **[thomas](https://github.com/keppy/thomas)** — the library behind this
+  plugin. One case set, one `score_text`, a baseline card, a training run
+  (encoder SFT on Modal, or RL), the same bar at both ends.
+- **[gonogo](https://github.com/keppy/gonogo)** — the decision layer, and the
+  root of the map. Any agent, your real cases, a target; the verdict comes
+  with the interval behind it.
+- **[evalroute](https://github.com/keppy/hermes-plugin-evalroute)** — the
+  routing layer: classify the task, hand back the arm with measured
+  cost-per-verified-success behind it, rate the outcome so the table keeps
+  learning.
+- **The Hermes plugins** — the same three, inside your agent's session:
+  [gonogo](https://github.com/keppy/hermes-plugin-gonogo) where the number
+  happened, this one with GPU launches behind the approval gate, and
+  evalroute's `/route` before the first turn.
+
 ```bash
 hermes plugins install keppy/hermes-plugin-thomas
 hermes plugins enable thomas
