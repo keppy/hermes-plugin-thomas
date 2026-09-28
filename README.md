@@ -32,6 +32,29 @@ the model never saw, poll rather than relaunch, report the interval.
 `thomas_encoder_train` is escalated to Hermes' approval gate on every call, by
 a hook that runs before the handler. The model can't skip it. The prompt looks like:
 
+![thomas plugin: check a candidate training file before any GPU spend](docs/demo.gif)
+
+A real `hermes -z` session against the installed plugin. The file passes every
+shape check — and the plugin still stops you, because 20 rows of the *eval*
+set is a contamination trap, not a training set:
+
+```
+Verdict: not fit for a fine-tune — and the main reason isn't the size,
+it's that this file is your evaluation set.
+
+1. It IS the gonogo canary eval set. [...] Fine-tuning on it trains on the
+   thing you score against. This is contamination, not a small-sample caveat.
+2. There's nothing to learn, and the default invocation errors out.
+   train_classifier raises outright: calib_size=500 must be smaller than
+   the 20 rows given — fails on shipped defaults before any GPU spend.
+
+No Modal call was made here.
+```
+
+That is the gate doing its job: the free local checks (shape, duplicates,
+label coverage, contract) run first, and the expensive path only opens on
+data that can actually be trained on.
+
 ```
 thomas: launch a PAID GPU fine-tune — johnnyboycurtis/ModernBERT-small-v2 on
 cases.jsonl (9503 rows), 3 epochs, batch 32, lr 2e-05, calib 500, seed 7, L4 (Modal)
