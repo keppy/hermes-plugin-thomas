@@ -14,7 +14,7 @@ license = { text = "MIT" }
 authors = [{ name = "James Dominguez" }]
 keywords = ["hermes", "plugin", "fine-tuning", "encoder", "calibration", "gonogo"]
 dependencies = [
-  "gonogo-eval>=0.3,<0.4",
+  "gonogo-eval==0.3.0",
 ]
 
 [project.optional-dependencies]
@@ -26,3 +26,7 @@ Source = "https://github.com/keppy/hermes-plugin-thomas"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# Exempt only reviewed exact pins; transitive releases keep Hermes' quarantine.
+[tool.uv.exclude-newer-package]
+gonogo-eval = false
