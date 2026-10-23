@@ -97,11 +97,12 @@ The plugin itself only needs `gonogo-eval`, which Hermes installs from
 `pyproject.toml`. Training and inference run in a separate Python so torch and
 Modal stay out of the Hermes venv:
 
-This plugin revision needs `thomas-train` v0.2.1 (the contract it reads
-shipped there) and `gonogo-eval` 0.3; thomas v0.2.0 is not compatible:
+This plugin revision needs `thomas-train` v0.2.1 or later (the contract it
+reads shipped there; v0.2.4 is the first on `gonogo-eval` 0.4) and
+`gonogo-eval` 0.4; thomas v0.2.0 is not compatible:
 
 ```bash
-git clone --branch v0.2.1 https://github.com/keppy/thomas && cd thomas
+git clone --branch v0.2.4 https://github.com/keppy/thomas && cd thomas
 uv venv && uv pip install -e ".[encoder]"
 .venv/Scripts/modal token new        # or .venv/bin/modal on macOS/Linux
 ```

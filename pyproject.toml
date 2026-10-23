@@ -6,7 +6,7 @@
 
 [project]
 name = "hermes-plugin-thomas"
-version = "0.1.2"
+version = "0.1.3"
 description = "Hermes plugin: fine-tune a calibrated encoder on Modal and rate it with gonogo."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,7 +14,7 @@ license = { text = "MIT" }
 authors = [{ name = "James Dominguez" }]
 keywords = ["hermes", "plugin", "fine-tuning", "encoder", "calibration", "gonogo"]
 dependencies = [
-  "gonogo-eval>=0.3,<0.4",
+  "gonogo-eval>=0.4,<0.5",
 ]
 
 [project.optional-dependencies]
