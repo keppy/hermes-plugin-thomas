@@ -97,26 +97,28 @@ The plugin itself only needs `gonogo-eval`, which Hermes installs from
 `pyproject.toml`. Training and inference run in a separate Python so torch and
 Modal stay out of the Hermes venv:
 
-This plugin revision needs `thomas-train` v0.2.1 or later (the contract it
-reads shipped there; v0.2.4 is the first on `gonogo-eval` 0.4) and
-`gonogo-eval` 0.4; thomas v0.2.0 is not compatible:
+This plugin revision needs `thomas-train` 0.2.4 or later (the first on
+PyPI and on `gonogo-eval` 0.4), installed with its encoder extra into a venv
+of its own:
 
 ```bash
-git clone --branch v0.2.4 https://github.com/keppy/thomas && cd thomas
-uv venv && uv pip install -e ".[encoder]"
-.venv/Scripts/modal token new        # or .venv/bin/modal on macOS/Linux
+uv venv ~/.venvs/thomas && uv pip install --python ~/.venvs/thomas/bin/python "thomas-train[encoder]"
+~/.venvs/thomas/bin/modal token new
 ```
 
+Modal mounts the installed `thomas` package into the training container, so
+no clone is needed. Clone https://github.com/keppy/thomas only for its
+examples.
+
 Set the **nonsecret runtime setting** `THOMAS_PYTHON` in the environment
-of the process that starts Hermes, then restart Hermes to inherit it. For
-example, from Git Bash on Windows:
+of the process that starts Hermes, then restart Hermes to inherit it:
 
 ```bash
-export THOMAS_PYTHON="C:/path/to/thomas/.venv/Scripts/python.exe"
+export THOMAS_PYTHON="$HOME/.venvs/thomas/bin/python"
 hermes
 ```
 
-On macOS/Linux, use the venv's `bin/python` instead. The plugin itself
+On Windows the interpreter is the venv's `Scripts\python.exe`. The plugin itself
 registers without this setting; only train and CPU eval need it. Do **not**
 put it in Hermes' `.env`: `requires_env` is the install-time credential
 prompt, and the interpreter path is neither a secret nor a plugin admission
